@@ -10,7 +10,7 @@ Installation and Configuration is on easy step:
 
 1. DOWNLOAD AND RUN the Cimitra Server install script file on a Linux Server in this manner:
 
-**curl -LJO https://cimitra.com/install -o ./ ; chmod +x ./install ; ./install**
+**curl -LJO https://cimitra.com/go -o ./ ; chmod +x ./go ; ./go**
 
 -OR-
 
