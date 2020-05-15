@@ -14,5 +14,5 @@ curl -LJO https://raw.githubusercontent.com/cimitrasoftware/server/master/cimitr
 
 -OR-
 
-curl -LJO https://tinyurl.com/cimserversh -o ./ ; chmod +x ./cimitra_server_install.sh ; ./cimitra_server_install.sh
+curl -LJO https://tinyurl.com/cimserversh -o ./ ; chmod +x ./cimserversh ; ./cimserversh
 
