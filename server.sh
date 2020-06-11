@@ -7,7 +7,7 @@ CIMITRA_URI="https://raw.githubusercontent.com/cimitrasoftware/server/master/cim
 
 curl -LJO --fail --location --progress-bar --output "go" "$CIMITRA_URI"
 
-chmod +x "./go"
+chmod +x "./cimitra_server_install.sh"
 
-./go
+./cimitra_server_install.sh
 
