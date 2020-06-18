@@ -1,5 +1,6 @@
 #!/bin/sh
 # CIMITRA SERVER INSTALL SCRIPT
+# Author, Tay Kratzer tay@cimitra.com
 
 set -e
 
