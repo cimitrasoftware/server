@@ -3,7 +3,7 @@
 
 set -e
 
-declare -i SCRIPT_NAME_HAS_GO_DIRECTIVE=`echo ${SCRIPT_NAME} | grep -c "go_"`
+SCRIPT_NAME_HAS_GO_DIRECTIVE=`echo ${SCRIPT_NAME} | grep -c "go_"`
 
 echo "SCRIPT_NAME_HAS_GO_DIRECTIVE = $SCRIPT_NAME_HAS_GO_DIRECTIVE"
 
