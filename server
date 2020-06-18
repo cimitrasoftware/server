@@ -1,0 +1,678 @@
+#!/bin/bash
+###########################################
+# import                                  #
+# Author: Tay Kratzer - tay@cimitra.com   #
+# Version: 1.0                            #
+# Modify date: 4/21/2020                  #
+###########################################
+# Cimitra Server Control Tool
+ 
+# Global Variables
+declare -i SHOW_HELP=0
+declare -i MAX_DISK_SPACE_THRESHOLD="90"
+declare -i MAX_BACKUPS_THRESHOLD="14"
+CIMITRA_SERVER_DATA_ROOT_LOCATION="/var/lib/docker/volumes/server_mongodata"
+CIMITRA_SERVER_DATA_LOCATION="${CIMITRA_SERVER_DATA_ROOT_LOCATION}/_data"
+CIMITRA_SERVER_BACKUP_ROOT_LOCATION="${CIMITRA_SERVER_DATA_ROOT_LOCATION}/_backup"
+
+# Allow the ability to override global variables above
+source /var/opt/cimitra/api/settings_api.cfg 2> /dev/null
+
+declare -i CIMITRA_SERVER_DIRECTORY_SET=0
+
+# See if a CIMITRA_SERVER_DIRECTORY is defined in an environment variable
+if [[ -z "${CIMITRA_SERVER_DIRECTORY}" ]] 
+then
+declare CIMITRA_SERVER_DIRECTORY="/var/opt/cimitra/server"
+fi
+
+
+while getopts "hs:" opt; do
+  case ${opt} in
+    s) CIMITRA_SERVER_DIRECTORY="$OPTARG"
+	CIMITRA_SERVER_DIRECTORY_SET=1
+	;;
+    h) SHOW_HELP="1"
+      ;;
+  esac
+done
+
+SCRIPT_COMMAND_LINE_IN=`echo $@`
+
+declare CIMITRA_YAML_FILE="${CIMITRA_SERVER_DIRECTORY}/docker-compose.yml"
+
+function SHOW_TIME() {
+    num=$1
+	message=$2
+    min=0
+    hour=0
+    day=0
+    if((num>59));then
+        ((sec=num%60))
+        ((num=num/60))
+        if((num>59));then
+            ((min=num%60))
+            ((num=num/60))
+            if((num>23));then
+                ((hour=num%24))
+                ((day=num/24))
+            else
+                ((hour=num))
+            fi
+        else
+            ((min=num))
+        fi
+    else
+        ((sec=num))
+    fi
+	
+	declare -i IN_DEMO_MODE=`echo "${CIMITRA_SERVER_ADDRESS}" | grep -c "192.168.1.21"`
+	
+    echo "Total ${message} Time: "$hour"h "$min"m "$sec"s"
+
+}
+
+function CALL_ERROR_EXIT()
+{
+ERROR_MESSAGE="$1"
+ERROR_MESSAGE="  ${ERROR_MESSAGE}  "
+echo ""
+if [ -t 0 ]
+then
+echo "$(tput setaf 1)ERROR:$(tput setab 7)${ERROR_MESSAGE}$(tput sgr 0)"
+else
+echo "ERROR:${ERROR_MESSAGE}"
+fi
+echo ""
+exit 1
+}
+
+function CALL_EXIT()
+{
+EXIT_CODE="$1"
+exit ${EXIT_CODE}
+}
+
+function CALL_INFO()
+{
+INFO_MESSAGE="$1"
+INFO_MESSAGE="  ${INFO_MESSAGE}  "
+echo ""
+if [ -t 0 ]
+then
+echo "$(tput setaf 7)$(tput setab 4)INFO:$(tput setaf 4)$(tput setab 7)${INFO_MESSAGE}$(tput sgr 0)"
+else
+echo "INFO:${INFO_MESSAGE}"
+fi
+echo ""
+}
+
+function CALL_COMMAND()
+{
+INFO_MESSAGE="$1"
+INFO_MESSAGE="  ${INFO_MESSAGE}  "
+echo ""
+if [ -t 0 ]
+then
+echo "$(tput setaf 7)$(tput setab 4)COMMAND:$(tput setaf 4)$(tput setab 7)${INFO_MESSAGE}$(tput sgr 0)"
+else
+echo "COMMAND:${INFO_MESSAGE}"
+fi
+echo ""
+}
+
+function SHOW_HELP()
+{
+echo ""
+echo $"Usage: cimitra server {start|stop|restart|status|upgrade|backup|help}"
+echo ""
+echo ""
+echo "Backup Help: cimitra server backup max_disk_threshold=90 max_backups=14"
+echo ""
+}
+
+if [ $SHOW_HELP -eq 1 ]
+then
+SHOW_HELP ${EXIT_CODE}
+exit 0
+fi
+
+function DISCOVER_SERVER_DIRECTORY()
+{
+
+declare -i CIMITRA_SERVER_DIRECTORY_EXISTS=`test -d ${CIMITRA_SERVER_DIRECTORY} ; echo $?` 
+
+if [ $CIMITRA_SERVER_DIRECTORY_EXISTS -ne 0 ]
+then
+CALL_ERROR_EXIT "The Cimitra Server directory ${CIMITRA_SERVER_DIRECTORY} does not exist"
+fi
+
+declare -i CIMITRA_YAML_FILE_EXISTS=`test -f ${CIMITRA_YAML_FILE} ; echo $?` 
+
+if [ $CIMITRA_YAML_FILE_EXISTS -ne 0 ]
+then
+CALL_ERROR_EXIT "The Cimitra Server YAML File ${CIMITRA_YAML_FILE} does not exist"
+fi
+
+cd ${CIMITRA_SERVER_DIRECTORY} 2> /dev/null
+
+CURRENT_DIR=`pwd` 
+
+if [ $CURRENT_DIR == ${CIMITRA_SERVER_DIRECTORY} ]
+then
+:
+else
+CALL_ERROR_EXIT "Cannot Access Directory: ${CIMITRA_SERVER_DIRECTORY}"
+fi
+
+declare -i CIMITRA_YAML_FILE_VALID=`grep -ic "cimitra" ${CIMITRA_YAML_FILE}` 
+
+if [ $CIMITRA_YAML_FILE_VALID -eq 0 ]
+then
+CALL_ERROR_EXIT "The Cimitra Server YAML File ${CIMITRA_YAML_FILE} is invalid"
+fi
+
+}
+
+function DISCOVER_DOCKER_EXISTENCE()
+{
+
+{
+docker 1> /dev/null 2> /dev/null
+} 1> /dev/null 2> /dev/null
+
+declare -i DOCKER_EXISTS=`echo $?`
+
+if [ $DOCKER_EXISTS -ne 0 ]
+then
+CALL_ERROR_EXIT "Docker does not exist"
+fi
+
+{
+declare -i DOCKER_COMPOSE_EXISTS=`docker-compose ; echo $?`
+} 1> /dev/null 2> /dev/null
+
+if [ $DOCKER_COMPOSE_EXISTS -gt 1 ]
+then
+CALL_ERROR_EXIT "Docker Compose does not exist"
+fi
+
+}
+
+function start()
+{
+CALL_COMMAND "cd ${CIMITRA_SERVER_DIRECTORY}"
+cd ${CIMITRA_SERVER_DIRECTORY} 
+CALL_COMMAND "docker-compose up -d"
+docker-compose up -d
+CALL_INFO "Finished Loading The Cimitra Docker Containers"
+}
+
+function stop()
+{
+CALL_COMMAND "cd ${CIMITRA_SERVER_DIRECTORY}"
+cd ${CIMITRA_SERVER_DIRECTORY} 
+CALL_COMMAND "docker-compose down"
+docker-compose down
+CALL_INFO "Finished Unloading The Cimitra Docker Containers"
+}
+
+function status()
+{
+CALL_COMMAND "docker images -a"
+docker images -a
+
+CALL_COMMAND "docker ps"
+docker ps
+
+declare -i WEB_RUNNING=0
+declare -i SERVER_RUNNING=0
+declare -i DB_RUNNING=0
+
+declare -i CIMITRA_WEB_IMAGE_EXISTS=`docker ps | grep -i "cimitra/web" | grep -ic up`
+
+if [ $CIMITRA_WEB_IMAGE_EXISTS -gt 0 ]
+then
+WEB_RUNNING="1"
+CALL_INFO "Cimitra/Web Client Docker Image Running"
+else
+CALL_INFO "Cimitra/Web Client Docker Image NOT Running"
+fi
+
+declare -i CIMITRA_SERVER_IMAGE_EXISTS=`docker ps | grep -i "cimitra/server" | grep -ic up`
+
+if [ $CIMITRA_SERVER_IMAGE_EXISTS -gt 0 ]
+then
+SERVER_RUNNING="1"
+CALL_INFO "Cimitra/Server Docker Image Running"
+else
+CALL_INFO "Cimitra/Server Docker Image NOT Running"
+fi
+
+declare -i CIMITRA_MONGO_IMAGE_EXISTS=`docker ps | grep -i "mongo" | grep -ic up`
+
+if [ $CIMITRA_MONGO_IMAGE_EXISTS -gt 0 ]
+then
+DB_RUNNING=1
+CALL_INFO "Cimitra/Mongo Database Docker Image Running"
+else
+CALL_INFO "Cimitra/Mongo Database Docker Image NOT Running"
+fi
+
+declare -i ALL_RUNNING=0
+
+let ALL_RUNNING=WEB_RUNNING+SERVER_RUNNING+DB_RUNNING
+
+if [ $ALL_RUNNING -eq 3 ]
+then
+CALL_EXIT "0"
+else
+CALL_EXIT "1"
+fi
+
+}
+
+function UPGRADE()
+{
+declare -i UPGRADE_START_TIME=`date +%s`
+
+CALL_INFO "[ Cimitra Server Upgrade - Start ]"
+
+CALL_COMMAND "cd ${CIMITRA_SERVER_DIRECTORY}"
+
+cd ${CIMITRA_SERVER_DIRECTORY}
+
+declare CHANGE_DIRECTORY_STATUS=`echo $?`
+
+if [ $CHANGE_DIRECTORY_STATUS -ne 0 ]
+then
+echo "Error: Could not change to directory: ${CIMITRA_SERVER_DIRECTORY}"
+return 1
+fi
+
+CALL_COMMAND "docker-compose down"
+docker-compose down
+
+CALL_COMMAND "docker-compose pull"
+docker-compose pull
+
+CALL_COMMAND "docker-compose up -d"
+docker-compose up -d
+
+declare -i UPGRADE_STOP_TIME=`date +%s`
+
+declare -i TOTAL_UPGRADE_RUN_TIME=0
+
+let TOTAL_UPGRADE_RUN_TIME=${UPGRADE_STOP_TIME}-${UPGRADE_START_TIME}
+
+SHOW_TIME "${TOTAL_SCRIPT_RUN_TIME}" "Server Upgrade"
+
+CALL_INFO "[ Cimitra Server Upgrade - Finish ]"
+}
+
+function REMOVE_CIMITRA_DOCKER_COMPONENTS()
+{
+
+declare -i CIMITRA_WEB_IMAGE_EXISTS=`docker images -a | grep "cimitra/web" | wc -m`
+
+if [ $CIMITRA_WEB_IMAGE_EXISTS -gt 2 ]
+then
+CIMITRA_WEB_IMAGE=`docker images -a | grep "cimitra/web" | head -1 | awk '{printf $3}'`
+CALL_INFO "Removing Cimitra Web Client Docker Image"
+CALL_COMMAND "docker rmi ${CIMITRA_WEB_IMAGE}"
+docker rmi ${CIMITRA_WEB_IMAGE}
+fi
+
+declare -i CIMITRA_SERVER_IMAGE_EXISTS=`docker images -a | grep "cimitra/server" | wc -m`
+
+if [ $CIMITRA_SERVER_IMAGE_EXISTS -gt 2 ]
+then
+CIMITRA_SERVER_IMAGE=`docker images -a | grep "cimitra/server" | head -1 | awk '{printf $3}'`
+CALL_INFO "Removing Cimitra Server Docker Image"
+CALL_COMMAND "docker rmi ${CIMITRA_SERVER_IMAGE}"
+docker rmi ${CIMITRA_SERVER_IMAGE}
+fi
+
+declare -i CIMITRA_MONGO_IMAGE_EXISTS=`docker images -a | grep "mongo" | grep "latest" | wc -m`
+
+
+if [ $CIMITRA_MONGO_IMAGE_EXISTS -gt 2 ]
+then
+CIMITRA_MONGO_IMAGE=`docker images -a | grep "mongo" | grep "latest" | head -1 | awk '{printf $3}'`
+CALL_INFO "Removing Cimitra Mongo Docker Image"
+CALL_COMMAND "docker rmi ${CIMITRA_MONGO_IMAGE}"
+docker rmi ${CIMITRA_MONGO_IMAGE}
+fi
+
+CALL_INFO "Finished Removing The Cimitra Docker Containers"
+}
+
+
+function INITIATE()
+{
+DISCOVER_SERVER_DIRECTORY
+DISCOVER_DOCKER_EXISTENCE
+}
+
+function PRUNE_BACKUPS()
+{
+# Force deleting at least one backup
+CIMITRA_SERVER_BACKUP_ROOT_LOCATION="${1}"
+declare -i MAX_BACKUPS_THRESHOLD="${2}"
+declare -i FORCE_DELETE=`echo "$3" | grep -c "force_delete"` 2> /dev/null
+
+declare -i CURRENT_NUMBER_OF_BACKUPS=15
+
+CIMITRA_BACKUP_TO_DELETE_EXISTS=`ls -l ${CIMITRA_SERVER_BACKUP_ROOT_LOCATION} | grep -c "cimitra_server_backup"`
+
+if [ $CIMITRA_BACKUP_TO_DELETE_EXISTS -eq 0 ]
+then
+return 0
+fi
+
+OLDEST_BACKUP_EPOCH_TIME=`ls -lt ${CIMITRA_SERVER_BACKUP_ROOT_LOCATION} | grep cimitra_server_backup | head -1 | awk -F "-~-" '{printf $2}'`
+
+# Determine if the value is numeric
+re='^[0-9]+$'
+
+if [[ ! ${OLDEST_BACKUP_EPOCH_TIME} =~ $re ]] 
+then
+CALL_ERROR_EXIT "Cannot Determine a Cimitra Server Backup To Remove"
+fi
+
+CIMITRA_BACKUP_TO_DELETE_EXISTS=`ls -l ${CIMITRA_SERVER_BACKUP_ROOT_LOCATION} | grep -c "${OLDEST_BACKUP_EPOCH_TIME}"`
+
+if [ $CIMITRA_BACKUP_TO_DELETE_EXISTS -lt 1 ]
+then
+CALL_ERROR_EXIT "Cannot Identify The Cimitra Server Backup To Remove"
+fi
+
+CIMITRA_BACKUP_DIR_TO_DELETE=`ls -l ${CIMITRA_SERVER_BACKUP_ROOT_LOCATION} | grep "${OLDEST_BACKUP_EPOCH_TIME}" | awk '{print $NF}'`
+
+cd ${CIMITRA_SERVER_BACKUP_ROOT_LOCATION}
+
+test -d ./${CIMITRA_BACKUP_DIR_TO_DELETE} 2> /dev/null
+
+declare -i DIR_TO_DELETE_EXISTS=`echo $?`
+
+if [ $DIR_TO_DELETE_EXISTS -ne 0 ]
+then
+CALL_ERROR_EXIT "Cannot Find Directory: ${CIMITRA_BACKUP_DIR_TO_DELETE}"
+fi
+
+if [ $FORCE_DELETE -gt 0 ]
+then
+CALL_INFO "Removing Cimitra Server Backup: ${CIMITRA_BACKUP_DIR_TO_DELETE}"
+CALL_INFO "rm -r ./${CIMITRA_BACKUP_DIR_TO_DELETE}"
+rm -r ./${CIMITRA_BACKUP_DIR_TO_DELETE}
+return 0
+fi
+
+# Determine if the value is numeric
+re='^[0-9]+$'
+
+if [[ ! ${MAX_BACKUPS_THRESHOLD} =~ $re ]] 
+then
+CALL_ERROR_EXIT "Cannot Determine The Maximum Backup Threshold"
+fi
+
+cd ${CIMITRA_SERVER_BACKUP_ROOT_LOCATION}
+
+CURRENT_NUMBER_OF_BACKUPS=`ls -1d cimitra_server_backup* | grep "-" | wc -l`
+
+# Determine if the value is numeric
+re='^[0-9]+$'
+
+if [[ ! ${CURRENT_NUMBER_OF_BACKUPS} =~ $re ]] 
+then
+CALL_ERROR_EXIT "Cannot Determine The Number of Backups"
+else
+CALL_INFO "Current Number of Backups: ${CURRENT_NUMBER_OF_BACKUPS}"
+fi
+
+if [ ${CURRENT_NUMBER_OF_BACKUPS} -lt ${MAX_BACKUPS_THRESHOLD} ]
+then
+CALL_INFO "The Current Number of Backups: ${CURRENT_NUMBER_OF_BACKUPS} Does Not Exceed The Maximum: ${MAX_BACKUPS_THRESHOLD}" 
+return 0
+fi
+
+while [ ${CURRENT_NUMBER_OF_BACKUPS} -gt ${MAX_BACKUPS_THRESHOLD} ]
+do
+
+OLDEST_BACKUP_EPOCH_TIME=`ls -lt ${CIMITRA_SERVER_BACKUP_ROOT_LOCATION} | grep cimitra_server_backup | head -1 | awk -F "-~-" '{printf $2}'`
+
+CIMITRA_BACKUP_DIR_TO_DELETE=`ls -l ${CIMITRA_SERVER_BACKUP_ROOT_LOCATION} | grep "${OLDEST_BACKUP_EPOCH_TIME}" | awk '{print $NF}'`
+
+cd ${CIMITRA_SERVER_BACKUP_ROOT_LOCATION}
+
+test -d ./${CIMITRA_BACKUP_DIR_TO_DELETE} 2> /dev/null
+
+declare -i DIR_TO_DELETE_EXISTS=`echo $?`
+
+if [ $DIR_TO_DELETE_EXISTS -ne 0 ]
+then
+CALL_ERROR_EXIT "Cannot Find Directory: ${CIMITRA_BACKUP_DIR_TO_DELETE}"
+fi
+
+CALL_INFO "Removing Cimitra Server Backup: ${CIMITRA_BACKUP_DIR_TO_DELETE}"
+
+CALL_INFO "rm -r ./${CIMITRA_BACKUP_DIR_TO_DELETE}"
+
+rm -r ./${CIMITRA_BACKUP_DIR_TO_DELETE}
+
+CURRENT_NUMBER_OF_BACKUPS=`ls -1d cimitra_server_backup* | grep "-" | wc -l`
+
+done
+
+}
+
+function REBRAND()
+{
+cimitra stop
+echo "Removing old brand"
+stop
+mkdir -p ${CIMITRA_SERVER_DIRECTORY}/rebrand 
+CURRENT_TIME=`date +%s`
+NEW_FILE_NAME="docker-compose.yml.${CURRENT_TIME}"
+mv -v ${CIMITRA_SERVER_DIRECTORY}/docker-compose.yml  ${CIMITRA_SERVER_DIRECTORY}/rebrand/${NEW_FILE_NAME} 
+echo "Ok now you can run the install for the new brand"
+}
+
+function BACKUP()
+{
+
+mkdir -p ${CIMITRA_SERVER_BACKUP_ROOT_LOCATION} 2> /dev/null
+
+test -d ${CIMITRA_SERVER_BACKUP_ROOT_LOCATION}
+
+declare -i CIMITRA_SERVER_BACKUP_ROOT_LOCATION_EXISTS=`echo $?`
+
+if [ $CIMITRA_SERVER_BACKUP_ROOT_LOCATION_EXISTS -ne 0 ]
+then
+CALL_ERROR_EXIT "Cannot locate backup directory: ${CIMITRA_SERVER_BACKUP_ROOT_LOCATION}"
+fi
+
+test -d ${CIMITRA_SERVER_DATA_LOCATION}
+
+declare -i CIMITRA_SERVER_DATA_LOCATION_EXISTS=`echo $?`
+
+if [ $CIMITRA_SERVER_DATA_LOCATION_EXISTS -ne 0 ]
+then
+CALL_ERROR_EXIT "Cannot locate Cimitra Server data directory: ${CIMITRA_SERVER_DATA_LOCATION}"
+fi
+
+
+# See if a Maximum disk space value is passed into the script
+declare -i MAX_DISK_SPACE_THRESHOLD_SET=`echo "${SCRIPT_COMMAND_LINE_IN}" | grep -c "max_disk_threshold="`
+
+if [ $MAX_DISK_SPACE_THRESHOLD_SET -gt 0 ]
+then
+# Get the Maximum passed value
+MAX_DISK_SPACE_THRESHOLD_IN=`echo "${SCRIPT_COMMAND_LINE_IN}" | awk -F "max_disk_threshold=" '{printf $2}' | awk '{printf $1}'`
+fi
+
+# Determine if the value is numeric
+re='^[0-9]+$'
+
+if [[ ${MAX_DISK_SPACE_THRESHOLD_IN} =~ $re ]] 
+then
+	if [ ${MAX_DISK_SPACE_THRESHOLD_IN} -lt 96 ]
+	then
+	MAX_DISK_SPACE_THRESHOLD=${MAX_DISK_SPACE_THRESHOLD_IN}
+	fi
+fi
+
+# See if a Maximum backup value is passed into the script
+declare -i MAX_BACKUPS_THRESHOLD_SET=`echo "${SCRIPT_COMMAND_LINE_IN}" | grep -c "max_backups="`
+
+if [ $MAX_BACKUPS_THRESHOLD_SET -gt 0 ]
+then
+
+# Get the Maximum passed value
+MAX_BACKUPS_THRESHOLD_IN=`echo "${SCRIPT_COMMAND_LINE_IN}" | awk -F "max_backups=" '{printf $2}' | awk '{printf $1}'`
+fi
+
+# Determine if the value is numeric
+re='^[0-9]+$'
+
+if [[ ${MAX_BACKUPS_THRESHOLD_IN} =~ $re ]] 
+then
+	if [ ${MAX_BACKUPS_THRESHOLD_IN} -gt 0 ]
+	then
+	MAX_BACKUPS_THRESHOLD=${MAX_BACKUPS_THRESHOLD_IN}
+	fi
+fi
+
+CALL_INFO "Maximum Disk Threshold: ${MAX_DISK_SPACE_THRESHOLD}%"
+
+CURRENT_DISK_SPACE=`df -h ${CIMITRA_SERVER_BACKUP_ROOT_LOCATION} | tail -1 | awk -F "%" '{printf $1}' | awk '{print $NF}'
+`
+
+re='^[0-9]+$'
+
+if [[ ! ${CURRENT_DISK_SPACE} =~ $re ]] 
+then
+CALL_ERROR_EXIT "Cannot determine the disk space percentage of ${CIMITRA_SERVER_BACKUP_ROOT_LOCATION}"
+else
+declare -i CURRENT_DISK_SPACE="${CURRENT_DISK_SPACE}"
+CALL_INFO "Current Disk Space: ${CURRENT_DISK_SPACE}%"
+fi
+
+PRUNE_BACKUPS "${CIMITRA_SERVER_BACKUP_ROOT_LOCATION}" "${MAX_BACKUPS_THRESHOLD}"
+
+
+if [ ${MAX_DISK_SPACE_THRESHOLD} -lt ${CURRENT_DISK_SPACE} ] 
+then
+PRUNE_BACKUPS "${CIMITRA_SERVER_BACKUP_ROOT_LOCATION}" "${MAX_BACKUPS_THRESHOLD}" "force_delete"
+fi
+
+CURRENT_DISK_SPACE=`df -h ${CIMITRA_SERVER_BACKUP_ROOT_LOCATION} | tail -1 | awk -F "%" '{printf $1}' | awk '{print $NF}'
+`
+re='^[0-9]+$'
+
+if [[ ! ${CURRENT_DISK_SPACE} =~ $re ]] 
+then
+CALL_ERROR_EXIT "Cannot determine the disk space percentage of ${CIMITRA_SERVER_BACKUP_ROOT_LOCATION}"
+else
+declare -i CURRENT_DISK_SPACE="${CURRENT_DISK_SPACE}"
+CALL_INFO "Current Disk Space: ${CURRENT_DISK_SPACE}%"
+fi
+
+if [ ${MAX_DISK_SPACE_THRESHOLD} -lt ${CURRENT_DISK_SPACE} ] 
+then
+CALL_ERROR_EXIT "Cannot perform backup, the current disk percentage: ${CURRENT_DISK_SPACE}% exceeds the maximum threshold: ${MAX_DISK_SPACE_THRESHOLD}%%"
+fi
+
+
+MONTH=`date +%m`
+
+DAY=`date +%d`
+
+YEAR=`date +%y`
+
+EPOCH_DATE=`date +%s`
+
+CIMITRA_SERVER_BACKUP_NAME="cimitra_server_backup_${MONTH}_${DAY}_${YEAR}-~-${EPOCH_DATE}"
+
+CIMITRA_SERVER_BACKUP_LOCATION="${CIMITRA_SERVER_BACKUP_ROOT_LOCATION}/${CIMITRA_SERVER_BACKUP_NAME}"
+
+test -d ${CIMITRA_SERVER_DATA_ROOT_LOCATION}
+
+declare -i CIMITRA_SERVER_DATA_ROOT_LOCATION_EXISTS=`echo $?`
+
+if [ $CIMITRA_SERVER_DATA_ROOT_LOCATION_EXISTS -ne 0 ]
+then
+CALL_ERROR_EXIT "Error Finding Directory: ${CIMITRA_SERVER_DATA_ROOT_LOCATION}"
+fi
+
+cd ${CIMITRA_SERVER_DATA_ROOT_LOCATION}
+
+declare -i CIMITRA_SERVER_DATA_ROOT_LOCATION_ACCESSIBLE=`echo $?`
+
+if [ $CIMITRA_SERVER_DATA_ROOT_LOCATION_ACCESSIBLE -ne 0 ]
+then
+CALL_ERROR_EXIT "Error Accessing Directory: ${CIMITRA_SERVER_DATA_ROOT_LOCATION}"
+fi
+
+mkdir -p ${CIMITRA_SERVER_BACKUP_LOCATION}
+
+declare -i CIMITRA_SERVER_BACKUP_LOCATION_CREATED=`echo $?`
+
+if [ $CIMITRA_SERVER_BACKUP_LOCATION_CREATED -ne 0 ]
+then
+CALL_ERROR_EXIT "Error Creating Backup Director: ${CIMITRA_SERVER_BACKUP_LOCATION}"
+fi
+
+rsync -av ${CIMITRA_SERVER_DATA_LOCATION}/ ${CIMITRA_SERVER_BACKUP_LOCATION}/
+
+PRUNE_BACKUPS "${CIMITRA_SERVER_BACKUP_ROOT_LOCATION}" "${MAX_BACKUPS_THRESHOLD}"
+
+PRUNE_BACKUPS "${CIMITRA_SERVER_BACKUP_ROOT_LOCATION}" "${MAX_BACKUPS_THRESHOLD}"
+
+}
+
+case "$1" in
+    start)
+	INITIATE
+	start 
+	;;
+    stop)
+	INITIATE
+	stop
+	;;
+    restart)
+	INITIATE
+	stop
+	start
+	;;
+    status)
+	INITIATE
+	status
+	;;
+    reinitialize)
+	INITIATE
+	stop
+	stop
+	REMOVE_CIMITRA_DOCKER_COMPONENTS
+	start 
+	;;
+    backup)
+	INITIATE
+	stop
+	BACKUP
+	start
+	;;
+	rebrand)
+	REBRAND
+	;;
+	upgrade)
+	INITIATE
+	UPGRADE
+	;;
+    help)
+	SHOW_HELP
+	;;
+    *)
+	SHOW_HELP
+	;;
+esac
