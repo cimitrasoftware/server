@@ -1,5 +1,6 @@
 #!/bin/sh
 # CIMITRA SERVER INSTALL SCRIPT
+# Author Tay Kratzer tay@cimitra.com
 
 # SCRIPT_NAME=`basename $1`
 SCRIPT_NAME="$1"
